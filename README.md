@@ -3,19 +3,37 @@ php 定时任务管理器
 
 # 配置
 ```php
-//config.yml
-manager-config:
-  work_dir: 'php cron manager work dir, need the access permission to write',
-  php_bin: 'php path, default is /usr/bin/php'
-task-config:
-  task-uuid:
-    script: 'script-path',
-    args: {_key: _value, ...},
-    error_log: On/Off,
+//Conf/config.yml
+# phpCronManager config
+manager:
+  # Work dir
+  dir: ''
+
+# phpCronManager task config
+task:
+  # Task uuid
+  sendEmail:
+    # Task script path
+    script: ''
+    # Runtime args for task script
+    args: {tenantId: 1}
+    # Enable error log for task
+    # Values: On/Off
+    # Default: On
+    error_log: On
+    # Error log file
     log_file: ''
+```
+# 安装
+```php
+{
+    "require": {
+        "php-cronManager/php-cronManager": "~1.0"
+    }
+}
 ```
 
 # 使用
 ```php
-/usr/bin/php php-cronManager start/stop/restart/ps/kill [task-uuid]
+phpCronManager start/stop/restart/ps/kill [task-uuid]
 ```

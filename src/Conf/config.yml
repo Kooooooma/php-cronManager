@@ -1,0 +1,29 @@
+# phpCronManager config
+manager:
+  # Work dir
+  # 该目录必须存在且对当前用户具有读写权限
+  dir: '/data/www/koma/cronmanager'
+  # Enable runtime log for phpCronManager
+  # Values: On/Off
+  # Default: On
+  runtime_log: On
+  # runtime log file
+  log_file: ''
+
+# phpCronManager task config
+task:
+  # Task uuid 会作为进程名称出现
+  sendEmail:
+    # Task script, 外部程序要考虑可重入性
+    # 即：第一次执行还没完成之前程序又一次被调用，是否会破坏数据完整性
+    # 可以向脚本中传递参数，通过 getopt 函数来获取
+    # Example: /path/script/task.php --args1=value --args2=value
+    script: /data/www/koma/task.php --tenantId=1 --version=v1.0.1
+    # Enable runtime log for phpCronManager
+    # Values: On/Off
+    # Default: On
+    runtime_log: On
+    # runtime log file
+    log_file: ''
+    # 任务执行间隔 second
+    delay: 5

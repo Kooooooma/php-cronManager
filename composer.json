@@ -1,0 +1,34 @@
+{
+  "name": "php-cronManager/php-cronManager",
+  "description": "php 定时任务管理器",
+  "type": "library",
+  "authors": [
+    {
+      "name": "Koma",
+      "email": "komazhang@foxmail.com"
+    }
+  ],
+  "require": {
+    "symfony/yaml": "~3.2",
+    "monolog/monolog": "~1.22",
+    "php-errors/php-errors": "~1.0"
+  },
+  "require-dev": {
+    "phpunit/phpunit": "~5.0"
+  },
+  "bin": [
+    "phpCronManager"
+  ],
+  "autoload": {
+    "psr-4": {
+      "PHPCronManager\\": "src/"
+    }
+  },
+  "repositories": {
+    "packagist": {
+      "type": "composer",
+      "url": "https://packagist.phpcomposer.com"
+    }
+  },
+  "license": "GPL v3.0"
+}
