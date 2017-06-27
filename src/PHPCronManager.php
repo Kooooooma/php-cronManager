@@ -4,24 +4,43 @@ namespace PHPCronManager;
 
 use PHPCronManager\Components\CliHelper;
 use PHPCronManager\Components\ConfigHelper;
+use PHPCronManager\Components\IPCHelper;
 use PHPCronManager\Components\Logger;
+use PHPCronManager\Components\MsgHelper;
+use PHPCronManager\Components\PipeHelper;
 use PHPCronManager\Components\Task;
+use PHPCronManager\Components\Worker;
 use PHPErrors\PHPErrors;
 use Psr\Log\LogLevel;
 
 class PHPCronManager
 {
     const version = 'v1.0';
-    const author  = 'Koma <komazhang@foxmail.com>';
+    const author = 'Koma <komazhang@foxmail.com>';
     const processName = 'phpCronManager';
+    const IPCKey = 'task-uuid';
 
     /**
-     * phpCronManager 进程Id，也是所有 task 的父进程
+     * phpCronManager Master 进程Id，也是所有 worker 的父进程
      *
      * @var int
      */
     private $pid = 0;
     private $pidFile = '';
+
+    /**
+     * Master 和 Worker 进程通信的管道
+     *
+     * @var object
+     */
+    private $pipe = null;
+
+    /**
+     * Master 和 Worker 进程通信的消息队列
+     *
+     * @var object
+     */
+    private $msgQueue = null;
 
     /**
      * 所有 phpCronManager 管理的 task 实体
@@ -31,12 +50,25 @@ class PHPCronManager
     private $tasks = array();
 
     /**
+     * phpCronManager worker 进程容器
+     *
+     * @var array
+     */
+    private $workers = array();
+
+    /**
      * phpCronManager 配置实体类
      * 包含 phpCronManager 和 task 的配置
      *
      * @var object
      */
     private $config = null;
+
+    /**
+     * phpCronManager 日志类实体
+     *
+     * @var object
+     */
     private $logger = null;
 
     private function __construct()
@@ -52,50 +84,49 @@ class PHPCronManager
 
     protected function run()
     {
-        $this->log(LogLevel::INFO, CliHelper::startMessage());
-
         $errorHandler = PHPErrors::enable();
-        $this->log(LogLevel::INFO, CliHelper::setErrorHandlerMessage());
 
         $args = CliHelper::parseArgs();
         if (empty($args)) CliHelper::printArgsErrorMessage();
-        $this->log(LogLevel::INFO, CliHelper::parseArgsMessage($args));
 
         list($command, $taskUUId, $configFile) = $args;
-        unset($args);
-
         if ($command == CliHelper::HELP) {
             CliHelper::printHelpMessage();
         }
 
         $this->config = ConfigHelper::parseConfig($configFile);
         if (empty($this->config->getTasks())) CliHelper::printNoTaskFoundMessage();
-        $this->log(LogLevel::INFO, CliHelper::parseConfigMessage($this->config->toString()));
 
-        if ( $this->config->isManagerOpenLog() ) {
+        if ($this->config->isManagerOpenLog()) {
             $this->logger = new Logger($this->config->getManagerLogFile());
             $errorHandler->setLogger($this->logger);
         }
         unset($errorHandler);
 
+        $this->log(LogLevel::INFO, CliHelper::startMessage());
+        $this->log(LogLevel::INFO, CliHelper::setErrorHandlerMessage());
+        $this->log(LogLevel::INFO, CliHelper::parseArgsMessage($args));
+        $this->log(LogLevel::INFO, CliHelper::parseConfigMessage($this->config->toString()));
+        unset($args);
+
         $this->setPidFile();
         switch ($command) {
             case CliHelper::START:
-                if ($this->checkProcessRunning($taskUUId)) CliHelper::printProcessAlreadyRunningMessage();
+                if ($this->checkMasterRunning()) CliHelper::printMasterAlreadyRunningMessage();
                 $this->bootstrap($taskUUId);
                 break;
             case CliHelper::STOP:
-                if (!$this->checkProcessRunning($taskUUId)) CliHelper::printNoProcessRunningMessage();
+                if (!$this->checkMasterRunning()) CliHelper::printMasterNotRunningMessage();
                 $this->stop($taskUUId);
                 break;
             case CliHelper::RESTART:
-                if (!$this->checkProcessRunning($taskUUId)) CliHelper::printNoProcessRunningMessage();
+                if (!$this->checkMasterRunning()) CliHelper::printMasterNotRunningMessage();
                 break;
             case CliHelper::KILL:
-                if (!$this->checkProcessRunning($taskUUId)) CliHelper::printNoProcessRunningMessage();
+                if (!$this->checkMasterRunning()) CliHelper::printMasterNotRunningMessage();
                 break;
             case CliHelper::PS:
-                if (!$this->checkProcessRunning($taskUUId)) CliHelper::printNoProcessRunningMessage();
+                if (!$this->checkMasterRunning()) CliHelper::printMasterNotRunningMessage();
                 break;
         }
     }
@@ -114,79 +145,104 @@ class PHPCronManager
             die(1);
         }
 
-        $this->log(LogLevel::INFO, CliHelper::startInitTaskProcess());
-        //fork任务子进程
-        foreach ( $this->config->getTasks() as $uuid => $taskConfig ) {
-            $this->log(LogLevel::INFO, CliHelper::initTaskProcess($uuid));
+        try {
+            $this->msgQueue = new MsgHelper(self::processName);
+        } catch (\Exception $e) {
+            $this->log(LogLevel::ERROR, CliHelper::createMsgQueueErrorMessage());
+            die(1);
+        }
+
+        $this->log(LogLevel::INFO, CliHelper::startInitTasksMessage());
+        foreach ($this->config->getTasks() as $uuid => $taskConfig) {
+            $this->log(LogLevel::INFO, CliHelper::initTaskMessage($uuid));
 
             try {
                 $task = new Task($taskConfig);
                 $task->setUUID($uuid);
                 $task->setLastRunTime();
+
+                $this->tasks[$uuid] = $task;
+                $this->log(LogLevel::INFO, CliHelper::initTaskSuccessMessage($uuid));
             } catch (\Exception $e) {
-                $this->log(LogLevel::WARNING, CliHelper::initTaskProcessErrorMessage($uuid, $e->getMessage()));
+                $this->log(LogLevel::WARNING, CliHelper::initTaskErrorMessage($uuid, $e->getMessage()));
                 continue;
             }
-            $this->log(LogLevel::INFO, CliHelper::initTaskProcessSuccess($uuid));
+        }
 
+        $this->log(LogLevel::INFO, CliHelper::endInitTasksMessage(count($this->tasks)));
+        $this->log(LogLevel::INFO, CliHelper::startInitWorkerMessage());
+
+        for ( $i = 0; $i < $this->config->getWorkerProcessNumber(); $i++ ) {
             $pid = pcntl_fork();
+
             if ($pid == -1) {
-                $this->log(LogLevel::ERROR, CliHelper::initTaskProcessErrorMessage($uuid));
+                $this->log(LogLevel::WARNING, CliHelper::forkWorkerProcessErrorMessage());
                 continue;
             }
 
             if ($pid > 0) {
-                $task->setPid($pid);
-                $this->tasks[$uuid] = $task;
-                unset($task);
-            } else {
-                $task->setPid(posix_getpid());
-                $info = array();
+                $worker = new Worker();
+                $worker->setPPId($this->getPid());
+                $worker->setPId($pid);
 
-                $this->log(LogLevel::INFO, CliHelper::taskReadyMessage($uuid, $task->getPid()));
-                while (pcntl_sigwaitinfo(array(SIGUSR1), $info)) {
-                    $task->run();
-                    $this->log(LogLevel::INFO, CliHelper::recordTaskRunningMessage($task->getUUId(), $task->getPid()));
+                $this->workers[$pid] = $worker;
+                unset($worker);
+            } else {
+                cli_set_process_title(self::processName . ': worker process');
+
+                declare(ticks = 1);
+                pcntl_signal(SIGUSR1, array($this, 'doTaskHandler'));
+
+                $this->log(LogLevel::INFO, CliHelper::workerReadyMessage(posix_getpid()));
+                while (true) {
+                    sleep(30);
                 }
+                exit(0);
             }
-            unset($pid);
         }
 
-        $this->log(LogLevel::INFO, CliHelper::managerSetupSignalHandlerMessage());
+        $this->log(LogLevel::INFO, CliHelper::endInitWorkerMessage(count($this->workers)));
+        $this->log(LogLevel::INFO, CliHelper::masterSetupSignalHandlerMessage());
+
         declare(ticks = 1);
         pcntl_signal(SIGUSR1, array($this, "restartHandler"));
         pcntl_signal(SIGUSR2, array($this, "stopHandler"));
-        pcntl_signal(SIGINT, array($this, "killHandler"));
 
-        $this->log(LogLevel::INFO, CliHelper::managerReadyMessage($this->getPid()));
-        while (count($this->tasks) > 0) {
+        $this->log(LogLevel::INFO, CliHelper::masterReadyMessage($this->getPid()));
+        while (count($this->workers) > 0) {
             foreach ($this->tasks as $uuid => $task) {
                 if (time() - $task->getLastRunTime() > $task->getDelayTime()) {
-                    posix_kill($task->getPid(), SIGUSR1);
                     $task->setLastRunTime();
-                }
+                    $this->msgQueue->send($uuid);
 
-                $res = pcntl_waitpid($task->getPid(), $status, WNOHANG);
-                if ($res == -1) { //an error occured
-                } else if ($res > 0) { //child process exit successfully
+                    foreach ($this->workers as $worker) {
+                        if (!$worker->checkRunning()) {
+                            $worker->setRunning(true);
+                            posix_kill($worker->getPid(), SIGUSR1);
+                            break;
+                        }
+                    }
                 }
-                $this->log(LogLevel::INFO, CliHelper::recordTaskRunningStatus($uuid, $task->getPid(), $res));
+            }
+
+            $ret = pcntl_waitpid(0, $status, WNOHANG);
+            if (pcntl_wifexited($status)) { //正常退出
+                if (isset($this->workers[$ret])) unset($this->workers[$ret]);
+            } else if (pcntl_wifsignaled($status)) { //因未捕获信号退出
+                if (isset($this->workers[$ret])) unset($this->workers[$ret]);
             }
 
             sleep(1);
         }
+
+        $this->clearPidFile();
     }
 
     protected function stop($taskUUId = '')
     {
-        if ( ($pid = $this->getPid()) > 0 ) {
+        if (($pid = $this->getPid()) > 0) {
             posix_kill($pid, SIGUSR2);
         }
-    }
-
-    protected function killHandler($signo)
-    {
-
     }
 
     protected function restartHandler($signo)
@@ -196,17 +252,21 @@ class PHPCronManager
 
     protected function stopHandler($signo)
     {
-        foreach ($this->tasks as $uuid => $task) {
-            posix_kill($task->getPid(), SIGKILL);
+        foreach ($this->workers as $worker) {
+            posix_kill($worker->getPid(), SIGKILL);
         }
-
-        $this->clearPidFile();
-        posix_kill($this->pid, SIGKILL);
     }
 
-    protected function checkProcessRunning($taskUUId = '')
+    protected function doTaskHandler($signo)
     {
-        //需要检测对应的任务是否已启动
+        if (($taskUUID = $this->msgQueue->receive()) && isset($this->tasks[$taskUUID])) {
+            $task = $this->tasks[$taskUUID];
+            $task->run();
+        }
+    }
+
+    protected function checkMasterRunning()
+    {
         return file_exists($this->pidFile);
     }
 
@@ -227,12 +287,18 @@ class PHPCronManager
     protected function setPidFile()
     {
         $this->pidFile = $this->config->getWorkDir().'/'.self::processName.'.pid';
+
+        $this->log(LogLevel::INFO, CliHelper::writePidMessage($this->pidFile));
     }
 
     protected function clearPidFile()
     {
-        if ( file_exists($this->pidFile) ) {
+        if (file_exists($this->pidFile)) {
             unlink($this->pidFile);
+        }
+
+        if (is_object($this->msgQueue)) {
+            $this->msgQueue->remove();
         }
     }
 
@@ -244,6 +310,8 @@ class PHPCronManager
      */
     protected function daemon()
     {
+        $this->log(LogLevel::INFO, CliHelper::startToDaemonMasterMessage());
+
         //step1 让 daemon 进程在子进程中执行
         $pid = pcntl_fork();
         if ( $pid == -1 ) {
@@ -298,6 +366,10 @@ class PHPCronManager
         //监控由它 fork 出来的子进程的退出状态
         //catch the SIGCHLD signal
 
+        //step8 设置 Master 进程名称
+        cli_set_process_title(self::processName.': master process ('.$this->config->getConfigFile().')');
+
+        $this->log(LogLevel::INFO, CliHelper::endToDaemonMasterMessage());
         return posix_getpid();
     }
 
@@ -309,11 +381,5 @@ class PHPCronManager
         } else {
             print '['.strtoupper($level).'] '.date('Y-m-d H:i:s', time())." {$message}\n";
         }
-    }
-
-    public function __destruct()
-    {
-        //异常退出时需要做清理工作,正常退出不走该流程
-//        $this->clearPidFile();
     }
 }

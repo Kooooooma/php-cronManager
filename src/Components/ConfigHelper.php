@@ -8,28 +8,33 @@ use Symfony\Component\Yaml\Yaml;
 
 class ConfigHelper
 {
-    public $manager = null;
-    public $task    = null;
+    public $manager    = null;
+    public $task       = null;
+    public $configFile = '';
+    public $defaultWorkerProcessNum = 1;
 
     public function __construct($config)
     {
-        if ( isset($config['manager']) ) {
+        if (isset($config['manager'])) {
             $this->manager = $config['manager'];
         }
 
-        if ( isset($config['task']) ) {
+        if (isset($config['task'])) {
             $this->task = $config['task'];
         }
     }
 
     public static function parseConfig($configFile)
     {
-        if ( !file_exists($configFile) ) throw new \Exception("Config File Not Found");
+        if (!file_exists($configFile)) throw new \Exception("Config File Not Found");
 
         try {
             $config = Yaml::parse(file_get_contents($configFile));
 
-            return new static($config);
+            $config = new static($config);
+            $config->setConfigFile($configFile);
+
+            return $config;
         } catch (ParseException $e) {
             throw $e;
         }
@@ -37,11 +42,23 @@ class ConfigHelper
 
     public function isManagerOpenLog()
     {
-        if ( isset($this->manager['runtime_log']) && strtolower($this->manager['runtime_log']) == 'on' ) {
+        if (isset($this->manager['runtime_log']) && strtolower($this->manager['runtime_log']) == 'on') {
             return true;
         }
 
         return false;
+    }
+
+    public function getWorkerProcessNumber()
+    {
+        $workerNum = $this->defaultWorkerProcessNum;
+
+        if (isset($this->manager['worker_processes'])) {
+            $workerNum = intval($this->manager['worker_processes']) > 0
+                        ? intval($this->manager['worker_processes']) : $workerNum;
+        }
+
+        return $workerNum;
     }
 
     public function getManagerLogFile()
@@ -70,6 +87,18 @@ class ConfigHelper
         }
 
         return $workDir;
+    }
+
+    public function setConfigFile($configFile)
+    {
+        $this->configFile = $configFile;
+
+        return $this;
+    }
+
+    public function getConfigFile()
+    {
+        return $this->configFile;
     }
 
     public function getTasks()

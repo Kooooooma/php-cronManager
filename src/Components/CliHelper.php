@@ -6,12 +6,12 @@ use PHPCronManager\PHPCronManager;
 
 class CliHelper
 {
-    const HELP = 'help';
-    const START = 'start';
-    const STOP = 'stop';
-    const KILL = 'kill';
-    const PS = 'ps';
-    const CONFIG = 'config';
+    const HELP    = 'help';
+    const START   = 'start';
+    const STOP    = 'stop';
+    const KILL    = 'kill';
+    const PS      = 'ps';
+    const CONFIG  = 'config';
     const RESTART = 'restart';
 
     public static $actionCommand = array(
@@ -76,9 +76,9 @@ class CliHelper
         self::printMessage($message, $exit);
     }
 
-    public static function printProcessAlreadyRunningMessage()
+    public static function printMasterAlreadyRunningMessage()
     {
-        $message = 'PHP Cron Manager 已经在运行';
+        $message = PHPCronManager::processName.' 已经在运行';
 
         self::printMessage($message, true, true);
     }
@@ -90,9 +90,9 @@ class CliHelper
         self::printMessage($message, true, true);
     }
 
-    public static function printNoProcessRunningMessage()
+    public static function printMasterNotRunningMessage()
     {
-        $message = '没有任务在运行';
+        $message = PHPCronManager::processName.' 还未启动';
 
         self::printMessage($message, true, true);
     }
@@ -138,11 +138,11 @@ HELP;
     public static function getLongOptions()
     {
         return array(
-            self::START . '::',
-            self::STOP . '::',
+            self::START   . '::',
+            self::STOP    . '::',
             self::RESTART . '::',
-            self::KILL . ':',
-            self::CONFIG . ':',
+            self::KILL    . ':',
+            self::CONFIG  . ':',
             self::PS,
             self::HELP
         );
@@ -150,32 +150,47 @@ HELP;
 
     public static function startMessage()
     {
-        return PHPCronManager::processName . " 启动";
+        return PHPCronManager::processName . " 开始启动";
     }
 
     public static function setErrorHandlerMessage()
     {
-        return "设置PHP错误处理类，错误报告级别：" . self::error2string(error_reporting());
+        return "设置PHP错误处理器，错误报告级别: " . self::error2string(error_reporting());
     }
 
     public static function parseArgsMessage($args)
     {
-        return "解析运行指令参数：" . is_string($args) ? $args : json_encode($args);
+        return "解析运行指令参数: " . (is_string($args) ? $args : json_encode($args));
     }
 
     public static function parseConfigMessage($config)
     {
-        return "解析配置文件：" . is_string($config) ? $config : json_encode($config);
+        return "解析配置文件: " . (is_string($config) ? $config : json_encode($config));
+    }
+
+    public static function writePidMessage($pidfile)
+    {
+        return "指定Master进程PID文件位置: {$pidfile}";
+    }
+
+    public static function startToDaemonMasterMessage()
+    {
+        return "开始将Master进程设置为Daemon模式";
+    }
+
+    public static function endToDaemonMasterMessage()
+    {
+        return "Master进入Daemon模式";
     }
 
     public static function forkErrorMessage($time = 1)
     {
-        return "fork error, fork count: {$time}";
+        return "第{$time}次Fork失败";
     }
 
     public static function setsidErrorMessage()
     {
-        return "setsid error";
+        return "重置会话Id错误";
     }
 
     public static function workDirNotExistsMessage($workDir)
@@ -195,52 +210,72 @@ HELP;
 
     public static function writeDaemonPidErrorMessage($pidFile)
     {
-        return "写主进程pid文件失败，pid文件：{pidFile}";
+        return "写主进程PID文件失败，PID文件: {$pidFile}";
     }
 
-    public static function startInitTaskProcess()
+    public static function createPIPEErrorMessage($pipeFile)
     {
-        return "开始初始化任务子进程";
+        return "创建Master-Worker通信管道失败，PIPE文件: {$pipeFile}";
     }
 
-    public static function initTaskProcess($uuid)
+    public static function createMsgQueueErrorMessage()
     {
-        return "开始初始化任务：{$uuid}";
+        return "创建Master-Worker通信消息队列失败";
     }
 
-    public static function initTaskProcessErrorMessage($uuid, $msg = '')
+    public static function startInitTasksMessage()
     {
-        return "子进程[{$uuid}]初始化失败，错误信息：{$msg}";
+        return "开始初始化待执行任务";
     }
 
-    public static function taskReadyMessage($uuid, $pid)
+    public static function endInitTasksMessage($taskNumber)
     {
-        return "子进程[{$uuid}]就绪，进程Id: {$pid}";
+        return "待执行任务初始化完成，总任务数: {$taskNumber}";
     }
 
-    public static function initTaskProcessSuccess($uuid)
+    public static function initTaskMessage($uuid)
     {
-        return "子进程[{$uuid}]初始化成功，开始创建子进程";
+        return "开始初始化任务: {$uuid}";
     }
 
-    public static function managerSetupSignalHandlerMessage()
+    public static function initTaskErrorMessage($uuid, $msg = '')
     {
-        return "主进程开始安装信号处理器";
+        return "任务 {$uuid} 初始化失败，错误信息: {$msg}";
     }
 
-    public static function managerReadyMessage($pid)
+    public static function initTaskSuccessMessage($uuid)
     {
-        return "主进程就绪，进程Id: {$pid}";
+        return "任务 {$uuid} 初始化成功";
     }
 
-    public static function recordTaskRunningStatus($uuid, $pid, $status = 0)
+    public static function startInitWorkerMessage()
     {
-        return "子进程[{$uuid}]运行中，运行状态：{$status}，进程Id: {$pid}";
+        return "开始初始化Worker进程";
     }
 
-    public static function recordTaskRunningMessage($uuid, $pid)
+    public static function forkWorkerProcessErrorMessage()
     {
-        return "子进程[{$uuid}]收到调用信号，调用外部脚本执行，进程Id: {$pid}";
+        return "Fork worker进程失败，进入重试阶段";
+    }
+
+    public static function endInitWorkerMessage($workerNum)
+    {
+        return "初始化Worker进程完成，Worker进程数: {$workerNum}";
+    }
+
+    public static function workerReadyMessage($pid)
+    {
+        return "Worker进程就绪，进程Id: {$pid}";
+    }
+
+    public static function masterSetupSignalHandlerMessage()
+    {
+        return "Master开始安装信号处理器";
+    }
+
+    public static function masterReadyMessage($pid)
+    {
+        return "Master就绪，进程Id: {$pid}";
     }
 
     public static function error2string($value)

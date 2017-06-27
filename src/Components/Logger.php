@@ -4,7 +4,6 @@ namespace PHPCronManager\Components;
 
 use Monolog\Handler\StreamHandler;
 use PHPCronManager\PHPCronManager;
-use Psr\Log\LogLevel;
 
 class Logger
 {

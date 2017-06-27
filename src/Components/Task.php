@@ -4,7 +4,6 @@ namespace PHPCronManager\Components;
 
 class Task
 {
-    private $pid  = 0;
     private $uuid = '';
     private $scriptFile  = '';
     private $delayTime   = 0;
@@ -21,10 +20,7 @@ class Task
 
     public function run()
     {
-        //记录任务最后一次执行时间
         $this->setLastRunTime();
-
-        //执行外部程序并向其传递参数
         exec($this->getScriptFile());
     }
 
@@ -60,17 +56,5 @@ class Task
     public function getUUId()
     {
         return $this->uuid;
-    }
-
-    public function setPid($pid)
-    {
-        $this->pid = $pid;
-
-        return $this;
-    }
-
-    public function getPid()
-    {
-        return $this->pid;
     }
 }

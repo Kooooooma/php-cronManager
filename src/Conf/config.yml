@@ -9,6 +9,8 @@ manager:
   runtime_log: On
   # runtime log file
   log_file: ''
+  # 工作进程数
+  worker_processes: 2
 
 # phpCronManager task config
 task:
@@ -27,3 +29,6 @@ task:
     log_file: ''
     # 任务执行间隔 second
     delay: 5
+  recveEmail:
+    script: /data/www/koma/task.php --tenantId=1 --version=v1.0.1
+    delay: 3
